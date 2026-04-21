@@ -1,13 +1,40 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+  output          = "../generated/prisma"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  // The 'url' is now handled in prisma.config.ts for Prisma 7
+  extensions = [postgis]
+}
+
+model Venue {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  address   String?
+  // Using Unsupported for the specific PostGIS geography type
+  location  Unsupported("geography(Point, 4326)")?
+  vibeTags  String[]
+  events    Event[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([location], map: "location_idx", type: Gist)
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  eventName   String?
+  posterUrl   String   // WebP Cloudinary URL
+  eventDate   DateTime
+  eventTime   String
+  vibe        String[]
+  venueId     String
+  venue       Venue    @relation(fields: [venueId], references: [id])
+  createdAt   DateTime @default(now())
+  isExpired   Boolean  @default(false)
+
+  @@index([eventDate])
 }
