@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 export interface ParsedPosterData {
   eventName: string;
@@ -79,7 +79,6 @@ If a field is not found on the poster, set its value to null. Return only the JS
       console.log(
         `Address missing for ${parsed.venue}. Ghost directory lookup required.`,
       );
-      // We don't push to missingFields because it's not a dealbreaker for the upload
     }
     if (missingFields.length > 0) {
       return { success: false, missingFields };
@@ -90,7 +89,7 @@ If a field is not found on the poster, set its value to null. Return only the JS
       data: parsed as ParsedPosterData,
     };
   } catch (error) {
-    console.error("Poster Parser Error:", error);
+    console.error(error);
     return {
       success: false,
       missingFields: ["system_error"],
