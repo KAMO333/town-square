@@ -15,12 +15,16 @@ export default function EventDetailScreen({ route, navigation }: any) {
 
   const openMaps = () => {
     const query = encodeURIComponent(event.venue?.name || event.eventName);
-    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`);
+    Linking.openURL(`http://maps.google.com/?q=${query}`);
   };
 
   const requestUber = () => {
-    const nickname = encodeURIComponent(event.venue?.name);
-    Linking.openURL(`uber://?action=setPickup&dropoff[nickname]=${nickname}`);
+    const destination = encodeURIComponent(
+      event.venue?.name || event.eventName,
+    );
+    Linking.openURL(
+      `uber://?action=setPickup&pickup=my_location&dropoff[formatted_address]=${destination}`,
+    );
   };
 
   return (
@@ -77,7 +81,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#050505" },
   backBtn: {
     position: "absolute",
-    top: 50,
+    top: 20, // Moved up slightly for better clearance
     left: 20,
     zIndex: 10,
     width: 40,

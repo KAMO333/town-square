@@ -7,15 +7,14 @@ import {
   TouchableOpacity,
   RefreshControl,
   Image,
-  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, NavigationProp } from "@react-navigation/native";
 
 const API_URL = "http://192.168.1.9:3000/api/events";
 
 export default function FeedScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavigationProp<any>>();
   const [events, setEvents] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -85,10 +84,7 @@ export default function FeedScreen() {
               style={styles.posterCard}
               activeOpacity={0.9}
               onPress={() =>
-                Alert.alert(
-                  item.eventName,
-                  `Venue: ${item.venue?.name}\n\nNavigation context is secure!`,
-                )
+                navigation.navigate("EventDetail", { event: item })
               }
             >
               <View

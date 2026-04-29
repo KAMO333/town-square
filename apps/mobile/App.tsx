@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, ActivityIndicator, StatusBar } from "react-native";
 import { NavigationContainer, DarkTheme } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import {
   SafeAreaProvider,
   useSafeAreaInsets,
@@ -20,8 +21,10 @@ import {
 
 import FeedScreen from "./src/screens/FeedScreen";
 import PostScreen from "./src/screens/PostScreen";
+import EventDetailScreen from "./src/screens/EventDetailScreen";
 
 const Tab = createBottomTabNavigator();
+const Stack = createNativeStackNavigator();
 
 const TS_THEME = {
   ...DarkTheme,
@@ -51,7 +54,17 @@ const SavedScreen = () => (
   </View>
 );
 
-// The actual Tab Navigator component
+// 1. Create the Feed Stack
+function FeedStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="FeedList" component={FeedScreen} />
+      <Stack.Screen name="EventDetail" component={EventDetailScreen} />
+    </Stack.Navigator>
+  );
+}
+
+// 2. Use the FeedStack in the Tab Navigator
 function TabNavigator() {
   const insets = useSafeAreaInsets();
 
@@ -77,7 +90,7 @@ function TabNavigator() {
     >
       <Tab.Screen
         name="Feed"
-        component={FeedScreen}
+        component={FeedStack} // Replaced FeedScreen with FeedStack here
         options={{
           tabBarIcon: () => (
             <Text style={{ color: "#666", fontSize: 18 }}>◈</Text>
