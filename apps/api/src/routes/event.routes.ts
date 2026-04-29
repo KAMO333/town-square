@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { parsePosterImage } from "../services/posterParser.service";
 import { EventService } from "../services/event.service";
+import { prisma } from "../lib/prisma";
 
 const router = Router();
 
@@ -53,5 +54,17 @@ router.post(
     }
   },
 );
+
+router.get("/", async (_req: Request, res: Response) => {
+  try {
+    const events = await prisma.event.findMany({
+      include: { venue: true },
+      orderBy: { eventDate: "asc" },
+    });
+    res.json({ success: true, data: events });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch events" });
+  }
+});
 
 export default router;

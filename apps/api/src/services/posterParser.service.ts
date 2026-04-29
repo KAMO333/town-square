@@ -1,4 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
@@ -17,9 +20,15 @@ export type ParseResult =
   | { success: false; missingFields: string[] };
 
 async function imageUrlToBase64(
-  url: string,
+  input: string,
 ): Promise<{ base64: string; mimeType: string }> {
-  const response = await fetch(url);
+  if (input.startsWith("data:image")) {
+    const [header, base64] = input.split(",");
+    const mimeType = header.match(/:(.*?);/)?.[1] || "image/jpeg";
+    return { base64, mimeType };
+  }
+
+  const response = await fetch(input);
   const buffer = await response.arrayBuffer();
   const base64 = Buffer.from(buffer).toString("base64");
   const mimeType = response.headers.get("content-type") || "image/jpeg";
