@@ -1,15 +1,15 @@
-import React, { useEffect, useState } from "react";
+import React, { useState, useCallback } from "react";
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  Dimensions,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect } from "@react-navigation/native";
 
 const API_URL = "http://192.168.1.9:3000/api/events";
 
@@ -40,22 +40,70 @@ const mapStyle = [
   },
 ];
 
+interface Venue {
+  name: string;
+  latitude?: number;
+  longitude?: number;
+}
+
+interface Event {
+  id: string;
+  eventName: string;
+  eventDate: string;
+  eventTime: string;
+  vibe: string[];
+  posterUrl: string;
+  venue: Venue;
+}
+
+const getVibeIcon = (vibe: string[]): string => {
+  if (!vibe || vibe.length === 0) return "🎵";
+  const first = vibe[0].toLowerCase();
+  if (
+    first.includes("amapiano") ||
+    first.includes("house") ||
+    first.includes("dj")
+  )
+    return "🎵";
+  if (first.includes("pub") || first.includes("bar") || first.includes("beer"))
+    return "🍺";
+  if (
+    first.includes("theatre") ||
+    first.includes("theater") ||
+    first.includes("comedy")
+  )
+    return "🎭";
+  if (first.includes("jazz") || first.includes("live")) return "🎷";
+  return "🎵";
+};
+
 export default function MapScreen() {
   const navigation = useNavigation();
-  const [events, setEvents] = useState([]);
-  const [selectedEventId, setSelectedEventId] = useState(null);
+  const [events, setEvents] = useState<Event[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch(API_URL)
-      .then((res) => res.json())
-      .then((json) => {
-        if (json.success) setEvents(json.data);
-      });
-  }, []);
+  const fetchEvents = async () => {
+    try {
+      const res = await fetch(API_URL);
+      const json = await res.json();
+      if (json.success) setEvents(json.data);
+    } catch (error) {
+      console.error(error);
+    }
+  };
 
-  const renderVenueItem = ({ item }: any) => {
-    const isTonight =
-      new Date(item.eventDate).toDateString() === new Date().toDateString();
+  useFocusEffect(
+    useCallback(() => {
+      fetchEvents();
+    }, []),
+  );
+
+  const isTonight = (dateStr: string) =>
+    new Date(dateStr).toDateString() === new Date().toDateString();
+
+  const renderVenueItem = ({ item }: { item: Event }) => {
+    const tonight = isTonight(item.eventDate);
+    const icon = getVibeIcon(item.vibe);
 
     return (
       <TouchableOpacity
@@ -63,11 +111,15 @@ export default function MapScreen() {
           styles.venueCard,
           selectedEventId === item.id && styles.activeCard,
         ]}
-        onPress={() =>
-          navigation.navigate("EventDetail" as never, { event: item } as never)
-        }
+        onPress={() => {
+          setSelectedEventId(item.id);
+          (navigation as any).navigate("EventDetail", { event: item });
+        }}
       >
-        <View>
+        <View style={styles.venueIconBox}>
+          <Text style={styles.venueIcon}>{icon}</Text>
+        </View>
+        <View style={styles.venueInfo}>
           <Text style={styles.venueName}>
             {item.venue?.name || "Unknown Venue"}
           </Text>
@@ -75,12 +127,9 @@ export default function MapScreen() {
         </View>
         <View style={styles.statusBadge}>
           <Text
-            style={[
-              styles.statusText,
-              { color: isTonight ? "#ff3c00" : "#666" },
-            ]}
+            style={[styles.statusText, { color: tonight ? "#ff3c00" : "#666" }]}
           >
-            {isTonight ? "TONIGHT" : "UPCOMING"}
+            {tonight ? "TONIGHT" : "UPCOMING"}
           </Text>
         </View>
       </TouchableOpacity>
@@ -94,16 +143,14 @@ export default function MapScreen() {
         style={styles.map}
         customMapStyle={mapStyle}
         initialRegion={{
-          latitude: -26.2485, // Soweto/Diepkloof area
+          latitude: -26.2485,
           longitude: 27.9333,
           latitudeDelta: 0.05,
           longitudeDelta: 0.05,
         }}
       >
-        {events.map((event: any) => {
-          const isTonight =
-            new Date(event.eventDate).toDateString() ===
-            new Date().toDateString();
+        {events.map((event) => {
+          const tonight = isTonight(event.eventDate);
           return (
             <Marker
               key={event.id}
@@ -111,7 +158,7 @@ export default function MapScreen() {
                 latitude: event.venue?.latitude || -26.2485,
                 longitude: event.venue?.longitude || 27.9333,
               }}
-              pinColor={isTonight ? "#ff3c00" : "#444444"} // Red for tonight, Grey for upcoming
+              pinColor={tonight ? "#ff3c00" : "#444444"}
               onPress={() => setSelectedEventId(event.id)}
             />
           );
@@ -126,7 +173,7 @@ export default function MapScreen() {
         <FlatList
           data={events}
           renderItem={renderVenueItem}
-          keyExtractor={(item) => item.id.toString()}
+          keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listPadding}
           showsVerticalScrollIndicator={false}
         />
@@ -137,7 +184,7 @@ export default function MapScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#050505" },
-  map: { width: "100%", height: "60%" },
+  map: { width: "100%", height: "55%" },
   header: {
     position: "absolute",
     top: 50,
@@ -161,14 +208,14 @@ const styles = StyleSheet.create({
     marginTop: -20,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    paddingTop: 20,
+    paddingTop: 16,
   },
-  listPadding: { paddingHorizontal: 20, paddingBottom: 100 },
+  listPadding: { paddingHorizontal: 16, paddingBottom: 100 },
   venueCard: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    padding: 16,
+    gap: 10,
+    padding: 12,
     backgroundColor: "#141414",
     borderRadius: 12,
     marginBottom: 10,
@@ -176,14 +223,25 @@ const styles = StyleSheet.create({
     borderColor: "#2a2a2a",
   },
   activeCard: { borderColor: "#ff3c00" },
-  venueName: { color: "#fff", fontFamily: "DMSans_700Bold", fontSize: 14 },
+  venueIconBox: {
+    width: 36,
+    height: 36,
+    backgroundColor: "rgba(255,60,0,0.1)",
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    flexShrink: 0,
+  },
+  venueIcon: { fontSize: 16 },
+  venueInfo: { flex: 1 },
+  venueName: { color: "#fff", fontFamily: "DMSans_700Bold", fontSize: 13 },
   eventName: {
     color: "#666",
     fontFamily: "DMSans_400Regular",
-    fontSize: 12,
+    fontSize: 11,
     marginTop: 2,
   },
-  statusBadge: { alignItems: "flex-end" },
+  statusBadge: { alignItems: "flex-end", flexShrink: 0 },
   statusText: {
     fontFamily: "SpaceMono_700Bold",
     fontSize: 9,

@@ -107,8 +107,9 @@ export default function EventDetailScreen({ route, navigation }: any) {
                 </Text>
                 <TouchableOpacity
                   style={styles.btnRemindMe}
-                  // For now, this will just alert until we build Screen 07
-                  onPress={() => alert("Navigating to Remind Me login...")}
+                  onPress={() =>
+                    navigation.navigate("RemindMe" as never, { event } as never)
+                  }
                 >
                   <Text style={styles.btnText}>🔔 Remind Me</Text>
                 </TouchableOpacity>

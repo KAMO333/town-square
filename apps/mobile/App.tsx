@@ -23,6 +23,7 @@ import FeedScreen from "./src/screens/FeedScreen";
 import PostScreen from "./src/screens/PostScreen";
 import EventDetailScreen from "./src/screens/EventDetailScreen";
 import MapScreen from "./src/screens/MapScreen";
+import RemindMeScreen from "./src/screens/RemindMeScreen";
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
