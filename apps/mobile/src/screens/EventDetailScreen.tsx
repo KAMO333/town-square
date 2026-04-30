@@ -13,6 +13,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 export default function EventDetailScreen({ route, navigation }: any) {
   const { event } = route.params;
 
+  // Logic to determine if the event is tonight
+  const isTonight =
+    new Date(event.eventDate).toDateString() === new Date().toDateString();
+
   const openMaps = () => {
     const query = encodeURIComponent(event.venue?.name || event.eventName);
     Linking.openURL(`http://maps.google.com/?q=${query}`);
@@ -25,6 +29,11 @@ export default function EventDetailScreen({ route, navigation }: any) {
     Linking.openURL(
       `uber://?action=setPickup&pickup=my_location&dropoff[formatted_address]=${destination}`,
     );
+  };
+
+  const requestBolt = () => {
+    // Basic deep link to open Bolt
+    Linking.openURL(`bolt://`);
   };
 
   return (
@@ -63,13 +72,48 @@ export default function EventDetailScreen({ route, navigation }: any) {
           </View>
 
           <View style={styles.actions}>
-            <TouchableOpacity style={styles.btnPrimary} onPress={openMaps}>
-              <Text style={styles.btnText}>🗺 Open in Google Maps</Text>
-            </TouchableOpacity>
+            {isTonight ? (
+              // SCREEN 02: Tonight State
+              <>
+                <TouchableOpacity style={styles.btnPrimary} onPress={openMaps}>
+                  <Text style={styles.btnText}>🗺 Open in Google Maps</Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity style={styles.btnSecondary} onPress={requestUber}>
-              <Text style={styles.btnTextSec}>🚗 Request Uber</Text>
-            </TouchableOpacity>
+                <View style={styles.rideRow}>
+                  <TouchableOpacity
+                    style={[styles.btnSecondary, { flex: 1 }]}
+                    onPress={requestUber}
+                  >
+                    <Text style={styles.btnTextSec}>🚗 Uber</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.btnSecondary,
+                      { flex: 1, borderColor: "#32d74b" },
+                    ]}
+                    onPress={requestBolt}
+                  >
+                    <Text style={[styles.btnTextSec, { color: "#32d74b" }]}>
+                      ⚡ Bolt
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              // SCREEN 03: Upcoming State
+              <View style={styles.upcomingWrapper}>
+                <Text style={styles.upcomingNote}>
+                  Directions and rides unlock on the day of the event.
+                </Text>
+                <TouchableOpacity
+                  style={styles.btnRemindMe}
+                  // For now, this will just alert until we build Screen 07
+                  onPress={() => alert("Navigating to Remind Me login...")}
+                >
+                  <Text style={styles.btnText}>🔔 Remind Me</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
       </ScrollView>
@@ -81,7 +125,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#050505" },
   backBtn: {
     position: "absolute",
-    top: 20, // Moved up slightly for better clearance
+    top: 20,
     left: 20,
     zIndex: 10,
     width: 40,
@@ -121,6 +165,7 @@ const styles = StyleSheet.create({
   },
   value: { fontFamily: "DMSans_700Bold", fontSize: 14, color: "#f0f0f0" },
   actions: { gap: 10, marginTop: 10 },
+  rideRow: { flexDirection: "row", gap: 10 },
   btnPrimary: {
     backgroundColor: "#ff3c00",
     padding: 16,
@@ -135,6 +180,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#2a2a2a",
   },
+  btnRemindMe: {
+    backgroundColor: "#3d1a6e", // Distinct color for reminders
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 10,
+  },
   btnText: { color: "#fff", fontFamily: "DMSans_700Bold" },
   btnTextSec: { color: "#f0f0f0", fontFamily: "DMSans_700Bold" },
+  upcomingWrapper: {
+    paddingTop: 10,
+  },
+  upcomingNote: {
+    fontFamily: "DMSans_400Regular",
+    color: "#888",
+    fontSize: 12,
+    textAlign: "center",
+    marginBottom: 10,
+  },
 });

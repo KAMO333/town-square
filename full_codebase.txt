@@ -1,0 +1,1310 @@
+==> apps/api/src/services/posterParser.service.ts <==
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+export interface ParsedPosterData {
+  eventName: string;
+  eventDate: string;
+  eventTime: string;
+  venue: string;
+  address: string;
+  vibe: string[];
+}
+
+export type ParseResult =
+  | { success: true; data: ParsedPosterData }
+  | { success: false; missingFields: string[] };
+
+async function imageUrlToBase64(
+  input: string,
+): Promise<{ base64: string; mimeType: string }> {
+  if (input.startsWith("data:image")) {
+    const [header, base64] = input.split(",");
+    const mimeType = header.match(/:(.*?);/)?.[1] || "image/jpeg";
+    return { base64, mimeType };
+  }
+
+  const response = await fetch(input);
+  const buffer = await response.arrayBuffer();
+  const base64 = Buffer.from(buffer).toString("base64");
+  const mimeType = response.headers.get("content-type") || "image/jpeg";
+  return { base64, mimeType };
+}
+
+export async function parsePosterImage(imageUrl: string): Promise<ParseResult> {
+  try {
+    const { base64, mimeType } = await imageUrlToBase64(imageUrl);
+
+    const prompt = `You are an event poster parser. Extract the following fields from this event poster image and return ONLY valid JSON, nothing else:
+{
+  "eventName": "name of the event",
+  "eventDate": "date in YYYY-MM-DD format",
+  "eventTime": "time doors open or event starts",
+  "venue": "name of the venue",
+  "address": "full address if visible",
+  "vibe": ["array", "of", "music", "or", "event", "genres"]
+}
+
+If a field is not found on the poster, set its value to null. Return only the JSON object, no explanation.`;
+
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          data: base64,
+          mimeType,
+        },
+      },
+    ]);
+
+    const raw = result.response.text();
+    let parsed: Partial<ParsedPosterData & Record<string, null>> = {};
+
+    try {
+      parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+    } catch {
+      return {
+        success: false,
+        missingFields: ["eventDate", "eventTime", "venue"],
+      };
+    }
+
+    const missingFields: string[] = [];
+    const isMissing = (val: any) =>
+      !val ||
+      val === "null" ||
+      val === "" ||
+      (Array.isArray(val) && val.length === 0);
+
+    if (isMissing(parsed.eventDate)) missingFields.push("eventDate");
+    if (isMissing(parsed.eventTime)) missingFields.push("eventTime");
+    if (isMissing(parsed.venue)) missingFields.push("venue");
+
+    if (isMissing(parsed.address)) {
+      console.log(
+        `Address missing for ${parsed.venue}. Ghost directory lookup required.`,
+      );
+    }
+    if (missingFields.length > 0) {
+      return { success: false, missingFields };
+    }
+
+    return {
+      success: true,
+      data: parsed as ParsedPosterData,
+    };
+  } catch (error) {
+    console.error(error);
+    return {
+      success: false,
+      missingFields: ["system_error"],
+    };
+  }
+}
+
+==> apps/api/src/services/event.service.ts <==
+import { prisma } from "../lib/prisma";
+
+export interface ParsedEventData {
+  eventName: string | null;
+  posterUrl: string;
+  eventDate: Date;
+  eventTime: string;
+  vibe: string[];
+  venueName: string;
+}
+
+export class EventService {
+  static async saveParsedEvent(data: ParsedEventData) {
+    let venue = await prisma.venue.findUnique({
+      where: {
+        name: data.venueName,
+      },
+    });
+
+    if (!venue) {
+      venue = await prisma.venue.create({
+        data: {
+          name: data.venueName,
+          vibeTags: data.vibe,
+        },
+      });
+    }
+
+    const event = await prisma.event.create({
+      data: {
+        eventName: data.eventName,
+        posterUrl: data.posterUrl,
+        eventDate: data.eventDate,
+        eventTime: data.eventTime,
+        vibe: data.vibe,
+        venueId: venue.id,
+      },
+    });
+
+    return event;
+  }
+}
+
+==> apps/api/src/__tests__/eventRoute.test.ts <==
+import request from "supertest";
+import express from "express";
+import { prisma } from "../lib/prisma";
+import eventRoutes from "../routes/event.routes";
+import * as posterParser from "../services/posterParser.service";
+
+jest.mock("../services/posterParser.service");
+
+const app = express();
+app.use(express.json());
+app.use("/api/events", eventRoutes);
+
+describe("POST /api/events/parse-poster", () => {
+  beforeAll(async () => {
+    await prisma.event.deleteMany();
+    await prisma.venue.deleteMany();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("should accept a poster URL, parse it, and save the event", async () => {
+    (posterParser.parsePosterImage as jest.Mock).mockResolvedValue({
+      success: true,
+      data: {
+        eventName: "Soweto Massive",
+        eventDate: "2026-05-01",
+        eventTime: "20:00",
+        venue: "Zone 6 Venue",
+        address: "28 Blackchain Shopping Centre",
+        vibe: ["Amapiano", "Live Music"],
+      },
+    });
+
+    const response = await request(app)
+      .post("/api/events/parse-poster")
+      .send({ imageUrl: "https://cloudinary.com/fake-poster.webp" });
+
+    expect(response.status).toBe(201);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.eventName).toBe("Soweto Massive");
+    expect(response.body.data.venueId).toBeDefined();
+  });
+});
+
+==> apps/api/src/__tests__/eventService.test.ts <==
+import { prisma } from "../lib/prisma";
+import { EventService } from "../services/event.service";
+
+describe("EventService - Ghost Venue Logic", () => {
+  beforeAll(async () => {
+    await prisma.event.deleteMany();
+    await prisma.venue.deleteMany();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("should reuse an existing venue instead of creating a duplicate", async () => {
+    const existingVenue = await prisma.venue.create({
+      data: {
+        name: "Zone 6 Venue",
+        address: "28 Blackchain Shopping Centre, Diepkloof",
+        vibeTags: ["Mainstream", "Amapiano"],
+      },
+    });
+
+    const parsedPosterData = {
+      eventName: "Soweto Massive",
+      posterUrl: "https://cloudinary.com/zone6.webp",
+      eventDate: new Date("2026-05-01"),
+      eventTime: "20:00",
+      vibe: ["Amapiano", "Live Music"],
+      venueName: "Zone 6 Venue",
+    };
+    const savedEvent = await EventService.saveParsedEvent(parsedPosterData);
+
+    expect(savedEvent.venueId).toBe(existingVenue.id);
+    expect(savedEvent.eventName).toBe("Soweto Massive");
+
+    const venueCount = await prisma.venue.count();
+    expect(venueCount).toBe(1);
+  });
+});
+
+==> apps/api/src/__tests__/db_connection.test.ts <==
+import { PrismaClient } from "../../generated/prisma";
+
+const prisma = new PrismaClient();
+
+describe("Database Connection", () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("should successfully connect to PostgreSQL", async () => {
+    // This simple query checks if the DB is reachable
+    const result = await prisma.$queryRaw`SELECT 1 as connected`;
+    expect(result).toEqual([{ connected: 1 }]);
+  });
+});
+
+==> apps/api/src/__tests__/eventStore.test.ts <==
+import { prisma } from "../lib/prisma";
+
+describe("Event Storage (PostgreSQL + PostGIS)", () => {
+  beforeAll(async () => {
+    // Clear the DB before testing
+    await prisma.event.deleteMany();
+    await prisma.venue.deleteMany();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("should create a venue and an event linked to it", async () => {
+    // 1. Create a Venue (The Ghost Record)
+    const venue = await prisma.venue.create({
+      data: {
+        name: "Makubenjalo",
+        address: "24097 Dippenaar St, Diepkloof Zone 2",
+        vibeTags: ["Amapiano", "Deep House"],
+      },
+    });
+
+    expect(venue.id).toBeDefined();
+
+    // 2. Create an Event linked to that venue
+    const event = await prisma.event.create({
+      data: {
+        eventName: "Colourful Sessions",
+        posterUrl: "https://cloudinary.com/test-poster.webp",
+        eventDate: new Date("2026-04-25"),
+        eventTime: "18:00",
+        vibe: ["Amapiano"],
+        venueId: venue.id,
+      },
+    });
+
+    expect(event.venueId).toBe(venue.id);
+    expect(event.eventName).toBe("Colourful Sessions");
+  });
+});
+
+==> apps/api/src/__tests__/health.test.ts <==
+import request from "supertest";
+import { app } from "../index";
+
+describe("GET /health", () => {
+  it("should return 200 with status ok", async () => {
+    const res = await request(app).get("/health");
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("ok");
+  });
+});
+
+==> apps/api/src/__tests__/posterParser.test.ts <==
+const mockGenerateContent = jest.fn();
+
+jest.mock("@google/generative-ai", () => ({
+  GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
+    getGenerativeModel: jest.fn().mockReturnValue({
+      generateContent: mockGenerateContent,
+    }),
+  })),
+}));
+
+global.fetch = jest.fn().mockResolvedValue({
+  arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+  headers: { get: () => "image/jpeg" },
+});
+
+import { parsePosterImage } from "../services/posterParser.service";
+
+describe("parsePosterImage", () => {
+  beforeEach(() => {
+    mockGenerateContent.mockReset();
+  });
+
+  it("should return parsed data when all fields are found", async () => {
+    mockGenerateContent.mockResolvedValueOnce({
+      response: {
+        text: () =>
+          JSON.stringify({
+            eventName: "Colourful Sessions",
+            eventDate: "2026-04-25",
+            eventTime: "18:00",
+            venue: "Makubenjalo",
+            address: "24097 Dippenaar St, Diepkloof Zone 2",
+            vibe: ["Amapiano", "Deep House"],
+          }),
+      },
+    });
+
+    const result = await parsePosterImage(
+      "https://fake-image-url.com/poster.jpg",
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toHaveProperty("eventDate");
+      expect(result.data).toHaveProperty("eventTime");
+      expect(result.data).toHaveProperty("venue");
+    }
+  });
+
+  it("should return failure when image has no event data", async () => {
+    mockGenerateContent.mockResolvedValueOnce({
+      response: {
+        text: () =>
+          JSON.stringify({
+            eventName: null,
+            eventDate: null,
+            eventTime: null,
+            venue: null,
+            address: null,
+            vibe: [],
+          }),
+      },
+    });
+
+    const result = await parsePosterImage(
+      "https://fake-image-url.com/random.jpg",
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.missingFields).toBeInstanceOf(Array);
+      expect(result.missingFields.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+==> apps/api/src/routes/event.routes.ts <==
+import { Router, Request, Response } from "express";
+import { parsePosterImage } from "../services/posterParser.service";
+import { EventService } from "../services/event.service";
+import { prisma } from "../lib/prisma";
+
+const router = Router();
+
+router.post(
+  "/parse-poster",
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const { imageUrl } = req.body;
+
+      if (!imageUrl) {
+        return res.status(400).json({
+          success: false,
+          error: "imageUrl is required",
+        });
+      }
+
+      const parsedResult = await parsePosterImage(imageUrl);
+
+      if (
+        !parsedResult.success ||
+        !parsedResult.data ||
+        !parsedResult.data.venue ||
+        !parsedResult.data.eventName
+      ) {
+        return res.status(422).json({
+          success: false,
+          error: "Could not extract sufficient event details from the poster.",
+        });
+      }
+
+      const savedEvent = await EventService.saveParsedEvent({
+        eventName: parsedResult.data.eventName,
+        posterUrl: imageUrl,
+        eventDate: new Date(parsedResult.data.eventDate),
+        eventTime: parsedResult.data.eventTime,
+        vibe: parsedResult.data.vibe || [],
+        venueName: parsedResult.data.venue,
+      });
+
+      return res.status(201).json({
+        success: true,
+        data: savedEvent,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        error: "Internal server error",
+      });
+    }
+  },
+);
+
+router.get("/", async (_req: Request, res: Response) => {
+  try {
+    const events = await prisma.event.findMany({
+      include: { venue: true },
+      orderBy: { eventDate: "asc" },
+    });
+    res.json({ success: true, data: events });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch events" });
+  }
+});
+
+export default router;
+
+==> apps/api/src/index.ts <==
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import eventRoutes from "./routes/event.routes";
+
+dotenv.config();
+
+const app = express();
+
+app.use(cors());
+
+// Update these two lines to allow larger payloads
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok", message: "Town Square API is running" });
+});
+
+app.use("/api/events", eventRoutes);
+
+export { app };
+
+const PORT = process.env.PORT || 3000;
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+==> apps/api/src/lib/prisma.ts <==
+import { PrismaClient } from "../../generated/prisma";
+import { PrismaPg } from "@prisma/adapter-pg";
+import "dotenv/config";
+
+const adapter = new PrismaPg({
+  connectionString: process.env.DATABASE_URL as string,
+});
+
+export const prisma = new PrismaClient({ adapter });
+
+==> apps/mobile/src/screens/PostScreen.tsx <==
+import React, { useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Image,
+  ActivityIndicator,
+  Alert,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import * as ImagePicker from "expo-image-picker";
+
+const API_URL = "http://192.168.1.9:3000/api/events/parse-poster";
+
+export default function PostScreen() {
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const [base64Image, setBase64Image] = useState<string | null>(null);
+
+  const pickImage = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      quality: 0.5,
+      base64: true,
+    });
+
+    if (!result.canceled) {
+      setImageUri(result.assets[0].uri);
+      setBase64Image(`data:image/jpeg;base64,${result.assets[0].base64}`);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!base64Image) return;
+    setLoading(true);
+
+    try {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageUrl: base64Image,
+        }),
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        Alert.alert("Success!", `Event "${result.data.eventName}" saved.`);
+        setImageUri(null);
+        setBase64Image(null);
+      } else {
+        Alert.alert("AI Parsing Failed", result.error);
+      }
+    } catch (error) {
+      Alert.alert("Error", "Check your Acer's Firewall or IP.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>POST AN EVENT</Text>
+      </View>
+
+      <View style={styles.content}>
+        <TouchableOpacity
+          style={styles.uploadZone}
+          onPress={pickImage}
+          activeOpacity={0.8}
+        >
+          {imageUri ? (
+            <Image source={{ uri: imageUri }} style={styles.previewImage} />
+          ) : (
+            <>
+              <Text style={styles.uploadIcon}>🖼</Text>
+              <Text style={styles.uploadTextBold}>Drop your poster here</Text>
+              <Text style={styles.uploadText}>Tap to choose from gallery</Text>
+            </>
+          )}
+        </TouchableOpacity>
+
+        <Text style={styles.submitNote}>
+          No account needed to post. Your poster goes live once verified.
+        </Text>
+
+        <TouchableOpacity
+          style={[
+            styles.btnPrimary,
+            (!imageUri || loading) && { opacity: 0.5 },
+          ]}
+          onPress={handleSubmit}
+          disabled={!imageUri || loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.btnPrimaryText}>Submit Poster →</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#050505",
+  },
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 20,
+  },
+  headerTitle: {
+    fontFamily: "BebasNeue_400Regular",
+    fontSize: 24,
+    color: "#f0f0f0",
+    letterSpacing: 2,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 16,
+    gap: 20,
+  },
+  uploadZone: {
+    borderWidth: 2,
+    borderColor: "#2a2a2a",
+    borderStyle: "dashed",
+    borderRadius: 16,
+    height: 200,
+    backgroundColor: "#141414",
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "hidden",
+  },
+  previewImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+  uploadIcon: {
+    fontSize: 32,
+    marginBottom: 8,
+  },
+  uploadTextBold: {
+    fontFamily: "DMSans_700Bold",
+    color: "#f0f0f0",
+    fontSize: 14,
+  },
+  uploadText: {
+    fontFamily: "DMSans_400Regular",
+    color: "#666",
+    fontSize: 12,
+    marginTop: 4,
+  },
+  submitNote: {
+    fontFamily: "DMSans_400Regular",
+    fontSize: 11,
+    color: "#666",
+    textAlign: "center",
+    paddingHorizontal: 20,
+  },
+  btnPrimary: {
+    backgroundColor: "#ff3c00",
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    height: 56,
+    justifyContent: "center",
+  },
+  btnPrimaryText: {
+    fontFamily: "DMSans_700Bold",
+    color: "#fff",
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+});
+
+==> apps/mobile/src/screens/EventDetailScreen.tsx <==
+import React from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Linking,
+  Image,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+export default function EventDetailScreen({ route, navigation }: any) {
+  const { event } = route.params;
+
+  // Logic to determine if the event is tonight
+  const isTonight =
+    new Date(event.eventDate).toDateString() === new Date().toDateString();
+
+  const openMaps = () => {
+    const query = encodeURIComponent(event.venue?.name || event.eventName);
+    Linking.openURL(`http://maps.google.com/?q=${query}`);
+  };
+
+  const requestUber = () => {
+    const destination = encodeURIComponent(
+      event.venue?.name || event.eventName,
+    );
+    Linking.openURL(
+      `uber://?action=setPickup&pickup=my_location&dropoff[formatted_address]=${destination}`,
+    );
+  };
+
+  const requestBolt = () => {
+    // Basic deep link to open Bolt
+    Linking.openURL(`bolt://`);
+  };
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <TouchableOpacity
+        style={styles.backBtn}
+        onPress={() => navigation.goBack()}
+      >
+        <Text style={styles.backText}>←</Text>
+      </TouchableOpacity>
+
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <View style={styles.headerImage}>
+          {event.posterUrl ? (
+            <Image source={{ uri: event.posterUrl }} style={styles.poster} />
+          ) : (
+            <View style={styles.placeholder} />
+          )}
+          <View style={styles.overlay}>
+            <Text style={styles.title}>{event.eventName}</Text>
+            <Text style={styles.venueSub}>{event.venue?.name}</Text>
+          </View>
+        </View>
+
+        <View style={styles.body}>
+          <View style={styles.infoBox}>
+            <Text style={styles.label}>DATE & TIME</Text>
+            <Text style={styles.value}>
+              {new Date(event.eventDate).toDateString()} · {event.eventTime}
+            </Text>
+          </View>
+
+          <View style={styles.infoBox}>
+            <Text style={styles.label}>LOCATION</Text>
+            <Text style={styles.value}>{event.venue?.name}</Text>
+          </View>
+
+          <View style={styles.actions}>
+            {isTonight ? (
+              // SCREEN 02: Tonight State
+              <>
+                <TouchableOpacity style={styles.btnPrimary} onPress={openMaps}>
+                  <Text style={styles.btnText}>🗺 Open in Google Maps</Text>
+                </TouchableOpacity>
+
+                <View style={styles.rideRow}>
+                  <TouchableOpacity
+                    style={[styles.btnSecondary, { flex: 1 }]}
+                    onPress={requestUber}
+                  >
+                    <Text style={styles.btnTextSec}>🚗 Uber</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.btnSecondary,
+                      { flex: 1, borderColor: "#32d74b" },
+                    ]}
+                    onPress={requestBolt}
+                  >
+                    <Text style={[styles.btnTextSec, { color: "#32d74b" }]}>
+                      ⚡ Bolt
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              // SCREEN 03: Upcoming State
+              <View style={styles.upcomingWrapper}>
+                <Text style={styles.upcomingNote}>
+                  Directions and rides unlock on the day of the event.
+                </Text>
+                <TouchableOpacity
+                  style={styles.btnRemindMe}
+                  // For now, this will just alert until we build Screen 07
+                  onPress={() => alert("Navigating to Remind Me login...")}
+                >
+                  <Text style={styles.btnText}>🔔 Remind Me</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#050505" },
+  backBtn: {
+    position: "absolute",
+    top: 20,
+    left: 20,
+    zIndex: 10,
+    width: 40,
+    height: 40,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  backText: { color: "#fff", fontSize: 20 },
+  headerImage: { width: "100%", height: 400 },
+  poster: { width: "100%", height: "100%", resizeMode: "cover" },
+  placeholder: { width: "100%", height: "100%", backgroundColor: "#1e1e1e" },
+  overlay: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 20,
+    backgroundColor: "rgba(0,0,0,0.7)",
+  },
+  title: { fontFamily: "BebasNeue_400Regular", fontSize: 32, color: "#fff" },
+  venueSub: { fontFamily: "DMSans_400Regular", color: "#888", fontSize: 16 },
+  body: { padding: 20, gap: 16 },
+  infoBox: {
+    padding: 16,
+    backgroundColor: "#141414",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+  },
+  label: {
+    fontFamily: "SpaceMono_400Regular",
+    fontSize: 10,
+    color: "#666",
+    marginBottom: 4,
+  },
+  value: { fontFamily: "DMSans_700Bold", fontSize: 14, color: "#f0f0f0" },
+  actions: { gap: 10, marginTop: 10 },
+  rideRow: { flexDirection: "row", gap: 10 },
+  btnPrimary: {
+    backgroundColor: "#ff3c00",
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  btnSecondary: {
+    backgroundColor: "#1e1e1e",
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+  },
+  btnRemindMe: {
+    backgroundColor: "#3d1a6e", // Distinct color for reminders
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 10,
+  },
+  btnText: { color: "#fff", fontFamily: "DMSans_700Bold" },
+  btnTextSec: { color: "#f0f0f0", fontFamily: "DMSans_700Bold" },
+  upcomingWrapper: {
+    paddingTop: 10,
+  },
+  upcomingNote: {
+    fontFamily: "DMSans_400Regular",
+    color: "#888",
+    fontSize: 12,
+    textAlign: "center",
+    marginBottom: 10,
+  },
+});
+
+==> apps/mobile/src/screens/MapScreen.tsx <==
+import React, { useEffect, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  Dimensions,
+} from "react-native";
+import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useNavigation } from "@react-navigation/native";
+
+const API_URL = "http://192.168.1.9:3000/api/events";
+
+const mapStyle = [
+  { elementType: "geometry", stylers: [{ color: "#212121" }] },
+  { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#757575" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#212121" }] },
+  {
+    featureType: "administrative",
+    elementType: "geometry",
+    stylers: [{ color: "#757575" }],
+  },
+  {
+    featureType: "poi",
+    elementType: "geometry",
+    stylers: [{ color: "#181818" }],
+  },
+  {
+    featureType: "road",
+    elementType: "geometry.fill",
+    stylers: [{ color: "#2c2c2c" }],
+  },
+  {
+    featureType: "water",
+    elementType: "geometry",
+    stylers: [{ color: "#000000" }],
+  },
+];
+
+export default function MapScreen() {
+  const navigation = useNavigation();
+  const [events, setEvents] = useState([]);
+  const [selectedEventId, setSelectedEventId] = useState(null);
+
+  useEffect(() => {
+    fetch(API_URL)
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success) setEvents(json.data);
+      });
+  }, []);
+
+  const renderVenueItem = ({ item }: any) => {
+    const isTonight =
+      new Date(item.eventDate).toDateString() === new Date().toDateString();
+
+    return (
+      <TouchableOpacity
+        style={[
+          styles.venueCard,
+          selectedEventId === item.id && styles.activeCard,
+        ]}
+        onPress={() =>
+          navigation.navigate("EventDetail" as never, { event: item } as never)
+        }
+      >
+        <View>
+          <Text style={styles.venueName}>
+            {item.venue?.name || "Unknown Venue"}
+          </Text>
+          <Text style={styles.eventName}>{item.eventName}</Text>
+        </View>
+        <View style={styles.statusBadge}>
+          <Text
+            style={[
+              styles.statusText,
+              { color: isTonight ? "#ff3c00" : "#666" },
+            ]}
+          >
+            {isTonight ? "TONIGHT" : "UPCOMING"}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      <MapView
+        provider={PROVIDER_GOOGLE}
+        style={styles.map}
+        customMapStyle={mapStyle}
+        initialRegion={{
+          latitude: -26.2485, // Soweto/Diepkloof area
+          longitude: 27.9333,
+          latitudeDelta: 0.05,
+          longitudeDelta: 0.05,
+        }}
+      >
+        {events.map((event: any) => {
+          const isTonight =
+            new Date(event.eventDate).toDateString() ===
+            new Date().toDateString();
+          return (
+            <Marker
+              key={event.id}
+              coordinate={{
+                latitude: event.venue?.latitude || -26.2485,
+                longitude: event.venue?.longitude || 27.9333,
+              }}
+              pinColor={isTonight ? "#ff3c00" : "#444444"} // Red for tonight, Grey for upcoming
+              onPress={() => setSelectedEventId(event.id)}
+            />
+          );
+        })}
+      </MapView>
+
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>SOWETO DIRECTORY</Text>
+      </View>
+
+      <View style={styles.directoryWrapper}>
+        <FlatList
+          data={events}
+          renderItem={renderVenueItem}
+          keyExtractor={(item) => item.id.toString()}
+          contentContainerStyle={styles.listPadding}
+          showsVerticalScrollIndicator={false}
+        />
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#050505" },
+  map: { width: "100%", height: "60%" },
+  header: {
+    position: "absolute",
+    top: 50,
+    left: 20,
+    backgroundColor: "rgba(10,10,10,0.9)",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+  },
+  headerTitle: {
+    fontFamily: "BebasNeue_400Regular",
+    fontSize: 18,
+    color: "#fff",
+    letterSpacing: 1,
+  },
+  directoryWrapper: {
+    flex: 1,
+    backgroundColor: "#050505",
+    marginTop: -20,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 20,
+  },
+  listPadding: { paddingHorizontal: 20, paddingBottom: 100 },
+  venueCard: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "#141414",
+    borderRadius: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+  },
+  activeCard: { borderColor: "#ff3c00" },
+  venueName: { color: "#fff", fontFamily: "DMSans_700Bold", fontSize: 14 },
+  eventName: {
+    color: "#666",
+    fontFamily: "DMSans_400Regular",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  statusBadge: { alignItems: "flex-end" },
+  statusText: {
+    fontFamily: "SpaceMono_700Bold",
+    fontSize: 9,
+    letterSpacing: 0.5,
+  },
+});
+
+==> apps/mobile/src/screens/FeedScreen.tsx <==
+import React, { useEffect, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  RefreshControl,
+  Image,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useNavigation, NavigationProp } from "@react-navigation/native";
+
+const API_URL = "http://192.168.1.9:3000/api/events";
+
+export default function FeedScreen() {
+  const navigation = useNavigation<NavigationProp<any>>();
+  const [events, setEvents] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchEvents = async () => {
+    try {
+      const response = await fetch(API_URL);
+      const json = await response.json();
+      if (json.success) setEvents(json.data);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchEvents();
+  }, []);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchEvents();
+  };
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.logo}>
+          TOWN<Text style={styles.logoAccent}>SQ</Text>
+        </Text>
+        <View style={styles.headerIcons}>
+          <TouchableOpacity style={styles.iconBtn}>
+            <Text>🔍</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn}>
+            <Text>🔔</Text>
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{events.length}</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={styles.locationBar}>
+        <Text style={styles.pin}>◉</Text>
+        <Text style={styles.locationText}>
+          Near <Text style={styles.locationBold}>Diepkloof, Soweto</Text>
+        </Text>
+      </View>
+
+      <ScrollView
+        style={styles.feed}
+        contentContainerStyle={styles.feedContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#ff3c00"
+            colors={["#ff3c00"]}
+          />
+        }
+      >
+        {events &&
+          events.map((item: any) => (
+            <TouchableOpacity
+              key={item.id}
+              style={styles.posterCard}
+              activeOpacity={0.9}
+              onPress={() =>
+                navigation.navigate("EventDetail", { event: item })
+              }
+            >
+              <View
+                style={[
+                  styles.posterImgPlaceholder,
+                  { backgroundColor: "#1e1e1e" },
+                ]}
+              >
+                {item.posterUrl && (
+                  <Image
+                    source={{ uri: item.posterUrl }}
+                    style={styles.posterImg}
+                  />
+                )}
+                <View style={styles.posterOverlay}>
+                  <Text style={styles.posterTitle}>{item.eventName}</Text>
+                </View>
+              </View>
+              <View style={styles.posterMeta}>
+                <View style={styles.metaItem}>
+                  <Text style={styles.metaDot}>◉</Text>
+                  <Text style={styles.metaText}>
+                    {item.venue?.name || "Unknown Venue"}
+                  </Text>
+                </View>
+                <View style={styles.vibeTag}>
+                  <Text style={styles.vibeTagText}>
+                    {item.vibe?.[0] || "EVENT"}
+                  </Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+          ))}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#050505" },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  logo: {
+    fontFamily: "BebasNeue_400Regular",
+    fontSize: 28,
+    color: "#f0f0f0",
+    letterSpacing: 2,
+  },
+  logoAccent: { color: "#ff3c00" },
+  headerIcons: { flexDirection: "row", gap: 8 },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    backgroundColor: "#1e1e1e",
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    backgroundColor: "#ff3c00",
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  badgeText: { color: "#fff", fontSize: 8, fontFamily: "SpaceMono_700Bold" },
+  locationBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+    gap: 6,
+  },
+  pin: { color: "#ff3c00", fontSize: 12 },
+  locationText: {
+    color: "#666",
+    fontFamily: "DMSans_400Regular",
+    fontSize: 13,
+  },
+  locationBold: { color: "#f0f0f0", fontFamily: "DMSans_700Bold" },
+  feed: { flex: 1, paddingHorizontal: 16 },
+  feedContent: { gap: 16, paddingBottom: 20 },
+  posterCard: {
+    backgroundColor: "#141414",
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+  },
+  posterImgPlaceholder: {
+    width: "100%",
+    height: 180,
+    justifyContent: "flex-end",
+  },
+  posterImg: { ...StyleSheet.absoluteFillObject, resizeMode: "cover" },
+  posterOverlay: { padding: 16, backgroundColor: "rgba(0,0,0,0.6)" },
+  posterTitle: {
+    fontFamily: "BebasNeue_400Regular",
+    fontSize: 22,
+    color: "#fff",
+    letterSpacing: 1,
+  },
+  posterMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    gap: 10,
+  },
+  metaItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+  metaDot: { color: "#ff3c00", fontSize: 10 },
+  metaText: { color: "#888", fontFamily: "DMSans_400Regular", fontSize: 11 },
+  vibeTag: {
+    marginLeft: "auto",
+    backgroundColor: "#1e1e1e",
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+  },
+  vibeTagText: {
+    color: "#ffb800",
+    fontFamily: "DMSans_700Bold",
+    fontSize: 9,
+    textTransform: "uppercase",
+  },
+});

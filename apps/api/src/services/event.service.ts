@@ -7,6 +7,7 @@ export interface ParsedEventData {
   eventTime: string;
   vibe: string[];
   venueName: string;
+  address: string;
 }
 
 export class EventService {
@@ -21,6 +22,7 @@ export class EventService {
       venue = await prisma.venue.create({
         data: {
           name: data.venueName,
+          address: data.address,
           vibeTags: data.vibe,
         },
       });

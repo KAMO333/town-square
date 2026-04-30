@@ -81,8 +81,12 @@ If a field is not found on the poster, set its value to null. Return only the JS
       (Array.isArray(val) && val.length === 0);
 
     if (isMissing(parsed.eventDate)) missingFields.push("eventDate");
-    if (isMissing(parsed.eventTime)) missingFields.push("eventTime");
     if (isMissing(parsed.venue)) missingFields.push("venue");
+    if (isMissing(parsed.eventName)) missingFields.push("eventName");
+
+    if (isMissing(parsed.eventTime)) {
+      parsed.eventTime = "Till Late";
+    }
 
     if (isMissing(parsed.address)) {
       console.log(

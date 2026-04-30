@@ -22,6 +22,7 @@ import {
 import FeedScreen from "./src/screens/FeedScreen";
 import PostScreen from "./src/screens/PostScreen";
 import EventDetailScreen from "./src/screens/EventDetailScreen";
+import MapScreen from "./src/screens/MapScreen";
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -37,14 +38,6 @@ const TS_THEME = {
     primary: "#ff3c00",
   },
 };
-
-const MapScreen = () => (
-  <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-    <Text style={{ fontFamily: "SpaceMono_700Bold", color: "#ff3c00" }}>
-      MAP VIEW
-    </Text>
-  </View>
-);
 
 const SavedScreen = () => (
   <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>

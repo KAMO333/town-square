@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -10,13 +10,16 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, NavigationProp } from "@react-navigation/native";
+import { useFocusEffect } from "@react-navigation/native";
 
 const API_URL = "http://192.168.1.9:3000/api/events";
+const FILTERS = ["All", "Tonight", "Club", "Pub", "Street"];
 
 export default function FeedScreen() {
   const navigation = useNavigation<NavigationProp<any>>();
-  const [events, setEvents] = useState([]);
+  const [events, setEvents] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeFilter, setActiveFilter] = useState("All");
 
   const fetchEvents = async () => {
     try {
@@ -30,14 +33,27 @@ export default function FeedScreen() {
     }
   };
 
-  useEffect(() => {
-    fetchEvents();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      fetchEvents();
+    }, []),
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
     fetchEvents();
   };
+
+  const isTonight = (dateStr: string) =>
+    new Date(dateStr).toDateString() === new Date().toDateString();
+
+  const filteredEvents = events.filter((item) => {
+    if (activeFilter === "All") return true;
+    if (activeFilter === "Tonight") return isTonight(item.eventDate);
+    return item.vibe?.some((v: string) =>
+      v.toLowerCase().includes(activeFilter.toLowerCase()),
+    );
+  });
 
   return (
     <SafeAreaView style={styles.container}>
@@ -63,7 +79,32 @@ export default function FeedScreen() {
         <Text style={styles.locationText}>
           Near <Text style={styles.locationBold}>Diepkloof, Soweto</Text>
         </Text>
+        <Text style={styles.radiusText}>5km ▾</Text>
       </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.filterRow}
+        contentContainerStyle={styles.filterContent}
+      >
+        {FILTERS.map((f) => (
+          <TouchableOpacity
+            key={f}
+            style={[styles.chip, activeFilter === f && styles.chipActive]}
+            onPress={() => setActiveFilter(f)}
+          >
+            <Text
+              style={[
+                styles.chipText,
+                activeFilter === f && styles.chipTextActive,
+              ]}
+            >
+              {f}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       <ScrollView
         style={styles.feed}
@@ -77,47 +118,45 @@ export default function FeedScreen() {
           />
         }
       >
-        {events &&
-          events.map((item: any) => (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.posterCard}
-              activeOpacity={0.9}
-              onPress={() =>
-                navigation.navigate("EventDetail", { event: item })
-              }
-            >
-              <View
-                style={[
-                  styles.posterImgPlaceholder,
-                  { backgroundColor: "#1e1e1e" },
-                ]}
-              >
-                {item.posterUrl && (
-                  <Image
-                    source={{ uri: item.posterUrl }}
-                    style={styles.posterImg}
-                  />
-                )}
-                <View style={styles.posterOverlay}>
-                  <Text style={styles.posterTitle}>{item.eventName}</Text>
+        {filteredEvents.map((item: any) => (
+          <TouchableOpacity
+            key={item.id}
+            style={styles.posterCard}
+            activeOpacity={0.9}
+            onPress={() => navigation.navigate("EventDetail", { event: item })}
+          >
+            <View style={styles.posterImgPlaceholder}>
+              {item.posterUrl && (
+                <Image
+                  source={{ uri: item.posterUrl }}
+                  style={styles.posterImg}
+                />
+              )}
+              {isTonight(item.eventDate) && (
+                <View style={styles.tonightBadge}>
+                  <Text style={styles.tonightBadgeText}>TONIGHT</Text>
                 </View>
+              )}
+              <View style={styles.posterOverlay}>
+                <Text style={styles.posterTitle}>{item.eventName}</Text>
               </View>
-              <View style={styles.posterMeta}>
-                <View style={styles.metaItem}>
-                  <Text style={styles.metaDot}>◉</Text>
-                  <Text style={styles.metaText}>
-                    {item.venue?.name || "Unknown Venue"}
-                  </Text>
-                </View>
-                <View style={styles.vibeTag}>
-                  <Text style={styles.vibeTagText}>
-                    {item.vibe?.[0] || "EVENT"}
-                  </Text>
-                </View>
+            </View>
+
+            <View style={styles.posterMeta}>
+              <View style={styles.metaItem}>
+                <Text style={styles.metaDot}>◉</Text>
+                <Text style={styles.metaText}>
+                  {item.venue?.name || "Unknown Venue"}
+                </Text>
               </View>
-            </TouchableOpacity>
-          ))}
+              <View style={styles.vibeTag}>
+                <Text style={styles.vibeTagText}>
+                  {item.vibe?.[0] || "EVENT"}
+                </Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+        ))}
       </ScrollView>
     </SafeAreaView>
   );
@@ -164,7 +203,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingBottom: 16,
+    paddingBottom: 12,
     gap: 6,
   },
   pin: { color: "#ff3c00", fontSize: 12 },
@@ -174,6 +213,25 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   locationBold: { color: "#f0f0f0", fontFamily: "DMSans_700Bold" },
+  radiusText: { marginLeft: "auto", color: "#ff3c00", fontSize: 11 },
+  filterRow: { flexGrow: 0 },
+  filterContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+    gap: 8,
+    flexDirection: "row",
+  },
+  chip: {
+    paddingVertical: 5,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+    backgroundColor: "#141414",
+  },
+  chipActive: { backgroundColor: "#ff3c00", borderColor: "#ff3c00" },
+  chipText: { color: "#666", fontSize: 11, fontWeight: "600" },
+  chipTextActive: { color: "#fff" },
   feed: { flex: 1, paddingHorizontal: 16 },
   feedContent: { gap: 16, paddingBottom: 20 },
   posterCard: {
@@ -187,8 +245,25 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 180,
     justifyContent: "flex-end",
+    backgroundColor: "#1e1e1e",
   },
   posterImg: { ...StyleSheet.absoluteFillObject, resizeMode: "cover" },
+  tonightBadge: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    backgroundColor: "#ff3c00",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  tonightBadgeText: {
+    color: "#fff",
+    fontSize: 8,
+    fontWeight: "700",
+    letterSpacing: 1,
+    fontFamily: "SpaceMono_700Bold",
+  },
   posterOverlay: { padding: 16, backgroundColor: "rgba(0,0,0,0.6)" },
   posterTitle: {
     fontFamily: "BebasNeue_400Regular",
