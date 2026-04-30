@@ -48,17 +48,26 @@ const SavedScreen = () => (
   </View>
 );
 
-// 1. Create the Feed Stack
 function FeedStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="FeedList" component={FeedScreen} />
       <Stack.Screen name="EventDetail" component={EventDetailScreen} />
+      <Stack.Screen name="RemindMe" component={RemindMeScreen} />
     </Stack.Navigator>
   );
 }
 
-// 2. Use the FeedStack in the Tab Navigator
+function MapStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="MapList" component={MapScreen} />
+      <Stack.Screen name="EventDetail" component={EventDetailScreen} />
+      <Stack.Screen name="RemindMe" component={RemindMeScreen} />
+    </Stack.Navigator>
+  );
+}
+
 function TabNavigator() {
   const insets = useSafeAreaInsets();
 
@@ -84,7 +93,7 @@ function TabNavigator() {
     >
       <Tab.Screen
         name="Feed"
-        component={FeedStack} // Replaced FeedScreen with FeedStack here
+        component={FeedStack}
         options={{
           tabBarIcon: () => (
             <Text style={{ color: "#666", fontSize: 18 }}>◈</Text>
@@ -93,7 +102,7 @@ function TabNavigator() {
       />
       <Tab.Screen
         name="Map"
-        component={MapScreen}
+        component={MapStack}
         options={{
           tabBarIcon: () => (
             <Text style={{ color: "#666", fontSize: 18 }}>◎</Text>

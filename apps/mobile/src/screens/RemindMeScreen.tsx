@@ -23,6 +23,10 @@ export default function RemindMeScreen({ route, navigation }: any) {
     setSubmitted(true);
   };
 
+  const goToFeed = () => {
+    navigation.navigate("FeedList" as never);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -42,7 +46,6 @@ export default function RemindMeScreen({ route, navigation }: any) {
 
         {!submitted ? (
           <>
-            {/* Auth prompt */}
             <View style={styles.authPrompt}>
               <Text style={styles.authIcon}>🔔</Text>
               <Text style={styles.authTitle}>GET NOTIFIED</Text>
@@ -52,7 +55,6 @@ export default function RemindMeScreen({ route, navigation }: any) {
               </Text>
             </View>
 
-            {/* Input */}
             <TextInput
               style={styles.input}
               placeholder="Phone number or email"
@@ -76,10 +78,7 @@ export default function RemindMeScreen({ route, navigation }: any) {
               <View style={styles.dividerLine} />
             </View>
 
-            <TouchableOpacity
-              style={styles.btnSecondary}
-              onPress={() => navigation.goBack()}
-            >
+            <TouchableOpacity style={styles.btnSecondary} onPress={goToFeed}>
               <Text style={styles.btnSecondaryText}>Continue Browsing</Text>
             </TouchableOpacity>
 
@@ -88,7 +87,6 @@ export default function RemindMeScreen({ route, navigation }: any) {
             </Text>
           </>
         ) : (
-          /* Success state */
           <View style={styles.successCard}>
             <Text style={styles.successIcon}>✅</Text>
             <Text style={styles.successTitle}>YOU'RE ON THE LIST</Text>
@@ -97,7 +95,7 @@ export default function RemindMeScreen({ route, navigation }: any) {
             </Text>
             <TouchableOpacity
               style={[styles.btnPrimary, { marginTop: 20 }]}
-              onPress={() => navigation.goBack()}
+              onPress={goToFeed}
             >
               <Text style={styles.btnPrimaryText}>Back to Feed</Text>
             </TouchableOpacity>
