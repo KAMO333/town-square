@@ -24,6 +24,7 @@ import PostScreen from "./src/screens/PostScreen";
 import EventDetailScreen from "./src/screens/EventDetailScreen";
 import MapScreen from "./src/screens/MapScreen";
 import RemindMeScreen from "./src/screens/RemindMeScreen";
+import SavedScreen from "./src/screens/SavedScreen";
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -40,14 +41,6 @@ const TS_THEME = {
   },
 };
 
-const SavedScreen = () => (
-  <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-    <Text style={{ fontFamily: "DMSans_400Regular", color: "#fff" }}>
-      SAVED EVENTS
-    </Text>
-  </View>
-);
-
 function FeedStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -62,6 +55,16 @@ function MapStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="MapList" component={MapScreen} />
+      <Stack.Screen name="EventDetail" component={EventDetailScreen} />
+      <Stack.Screen name="RemindMe" component={RemindMeScreen} />
+    </Stack.Navigator>
+  );
+}
+
+function SavedStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="SavedList" component={SavedScreen} />
       <Stack.Screen name="EventDetail" component={EventDetailScreen} />
       <Stack.Screen name="RemindMe" component={RemindMeScreen} />
     </Stack.Navigator>
@@ -120,7 +123,7 @@ function TabNavigator() {
       />
       <Tab.Screen
         name="Saved"
-        component={SavedScreen}
+        component={SavedStack}
         options={{
           tabBarIcon: () => (
             <Text style={{ color: "#666", fontSize: 18 }}>♡</Text>

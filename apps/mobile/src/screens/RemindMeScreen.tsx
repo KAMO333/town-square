@@ -9,17 +9,19 @@ import {
   ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { saveEvent } from "../services/savedEvents";
 
 export default function RemindMeScreen({ route, navigation }: any) {
   const { event } = route.params;
   const [contact, setContact] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
-  const handleSetReminder = () => {
+  const handleSetReminder = async () => {
     if (!contact.trim()) {
       Alert.alert("Required", "Please enter a phone number or email.");
       return;
     }
+    await saveEvent(event, contact);
     setSubmitted(true);
   };
 
