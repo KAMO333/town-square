@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { v2 as cloudinary } from "cloudinary";
 import { parsePosterImage } from "../services/posterParser.service";
 import { EventService } from "../services/event.service";
+import { expireOldEvents } from "../services/expiry.service";
 import { prisma } from "../lib/prisma";
 
 cloudinary.config({
@@ -137,10 +138,20 @@ router.post("/confirm", async (req: Request, res: Response): Promise<any> => {
 
 router.get("/", async (_req: Request, res: Response) => {
   const events = await prisma.event.findMany({
+    where: { isExpired: false },
     include: { venue: true },
     orderBy: { eventDate: "asc" },
   });
   res.json({ success: true, data: events });
+});
+
+router.post("/expire-now", async (_req: Request, res: Response) => {
+  try {
+    await expireOldEvents();
+    res.json({ success: true, message: "Expiry run complete" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Expiry failed" });
+  }
 });
 
 export default router;

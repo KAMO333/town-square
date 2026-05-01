@@ -1,15 +1,15 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import cron from "node-cron";
 import eventRoutes from "./routes/event.routes";
+import { expireOldEvents } from "./services/expiry.service";
 
 dotenv.config();
 
 const app = express();
 
 app.use(cors());
-
-// Update these two lines to allow larger payloads
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
@@ -18,6 +18,12 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/events", eventRoutes);
+
+// Run every night at 4AM
+cron.schedule("0 4 * * *", async () => {
+  console.log("Running nightly event expiry...");
+  await expireOldEvents();
+});
 
 export { app };
 
