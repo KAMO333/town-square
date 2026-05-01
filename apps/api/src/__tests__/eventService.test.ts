@@ -27,6 +27,7 @@ describe("EventService - Ghost Venue Logic", () => {
       eventTime: "20:00",
       vibe: ["Amapiano", "Live Music"],
       venueName: "Zone 6 Venue",
+      address: "28 Blackchain Shopping Centre, Diepkloof",
     };
     const savedEvent = await EventService.saveParsedEvent(parsedPosterData);
 
