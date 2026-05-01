@@ -18,22 +18,39 @@ export default function EventDetailScreen({ route, navigation }: any) {
     new Date(event.eventDate).toDateString() === new Date().toDateString();
 
   const openMaps = () => {
-    const query = encodeURIComponent(event.venue?.name || event.eventName);
-    Linking.openURL(`http://maps.google.com/?q=${query}`);
+    const query = encodeURIComponent(
+      event.venue?.address || event.venue?.name || event.eventName,
+    );
+    Linking.openURL(
+      `https://www.google.com/maps/search/?api=1&query=${query}`,
+    ).catch(() => {
+      Linking.openURL(`https://maps.google.com/?q=${query}`);
+    });
   };
 
   const requestUber = () => {
     const destination = encodeURIComponent(
-      event.venue?.name || event.eventName,
+      event.venue?.address || event.venue?.name || event.eventName,
     );
     Linking.openURL(
       `uber://?action=setPickup&pickup=my_location&dropoff[formatted_address]=${destination}`,
-    );
+    ).catch(() => {
+      Linking.openURL(
+        `https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[formatted_address]=${destination}`,
+      );
+    });
   };
 
   const requestBolt = () => {
-    // Basic deep link to open Bolt
-    Linking.openURL(`bolt://`);
+    const destination = encodeURIComponent(
+      event.venue?.address || event.venue?.name || event.eventName,
+    );
+    Linking.openURL(
+      `https://bolt.eu/ride/?destination_address=${destination}`,
+    ).catch(() => {
+      // If Bolt app deep link fails, open Bolt website
+      Linking.openURL(`https://bolt.eu`);
+    });
   };
 
   return (
