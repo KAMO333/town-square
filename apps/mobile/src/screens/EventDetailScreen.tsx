@@ -45,11 +45,10 @@ export default function EventDetailScreen({ route, navigation }: any) {
     const destination = encodeURIComponent(
       event.venue?.address || event.venue?.name || event.eventName,
     );
-    Linking.openURL(
-      `https://bolt.eu/ride/?destination_address=${destination}`,
-    ).catch(() => {
-      // If Bolt app deep link fails, open Bolt website
-      Linking.openURL(`https://bolt.eu`);
+    Linking.openURL(`com.bolt.consumer://`).catch(() => {
+      Linking.openURL(
+        `https://bolt.eu/ride/?destination_address=${destination}`,
+      );
     });
   };
 

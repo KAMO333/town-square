@@ -13,8 +13,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 
-const PARSE_URL = "http://192.168.1.9:3000/api/events/parse-only";
-const CONFIRM_URL = "http://192.168.1.9:3000/api/events/confirm";
+const PARSE_URL = "https://town-square-api.onrender.com/api/events/parse-only";
+const CONFIRM_URL = "https://town-square-api.onrender.com/api/events/confirm";
 
 type Status = "idle" | "loading" | "success" | "failure";
 

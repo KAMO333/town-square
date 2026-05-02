@@ -12,7 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, NavigationProp } from "@react-navigation/native";
 import { useFocusEffect } from "@react-navigation/native";
 
-const API_URL = "http://192.168.1.9:3000/api/events";
+const API_URL = "https://town-square-api.onrender.com/api/events";
 const FILTERS = ["All", "Tonight", "Club", "Pub", "Street"];
 
 export default function FeedScreen() {
